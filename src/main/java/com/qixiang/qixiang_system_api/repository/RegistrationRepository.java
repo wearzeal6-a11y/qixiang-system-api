@@ -130,6 +130,14 @@ public interface RegistrationRepository extends JpaRepository<Registration, Long
     List<Registration> findByEventId(Long eventId);
     
     /**
+     * 根据项目ID统计报名记录数量
+     * @param eventId 比赛项目ID
+     * @return 报名记录数量
+     */
+    @Query("SELECT COUNT(r) FROM Registration r WHERE r.eventId = :eventId AND r.status = 'CONFIRMED'")
+    int countByEventId(@Param("eventId") Long eventId);
+    
+    /**
      * 根据参赛单位ID和组别ID查询报名记录
      * @param teamId 参赛单位ID
      * @param groupId 竞赛组别ID

@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
  * 这是报名规则的核心存储中心
  */
 @Entity
-@Table(name = "groups")
+@Table(name = "`groups`")
 public class Group {
     
     /**

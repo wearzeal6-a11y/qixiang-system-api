@@ -46,6 +46,24 @@ public class Event {
     private String gender;
     
     /**
+     * 最大参赛人数限制
+     */
+    @Column(name = "max_participants")
+    private Integer maxParticipants;
+    
+    /**
+     * 当前已报名人数
+     */
+    @Column(name = "current_participants")
+    private Integer currentParticipants;
+    
+    /**
+     * 是否启用容量限制
+     */
+    @Column(name = "is_capacity_limited")
+    private Boolean isCapacityLimited;
+    
+    /**
      * 创建时间
      */
     @Column(name = "created_at", updatable = false)
@@ -61,8 +79,10 @@ public class Event {
      * 项目类型枚举
      */
     public enum EventType {
-        INDIVIDUAL("INDIVIDUAL", "个人项目"),
+        TRACK("TRACK", "径赛项目"),
+        FIELD("FIELD", "田赛项目"),
         RELAY("RELAY", "接力项目"),
+        INDIVIDUAL("INDIVIDUAL", "个人项目"),
         TEAM("TEAM", "团体项目");
         
         private final String code;
@@ -87,7 +107,9 @@ public class Event {
                     return type;
                 }
             }
-            throw new IllegalArgumentException("Unknown event type code: " + code);
+            // 如果找不到匹配的代码，返回INDIVIDUAL作为默认值
+            System.out.println("Unknown event type code: " + code + ", returning INDIVIDUAL as default");
+            return INDIVIDUAL;
         }
     }
     
@@ -200,6 +222,30 @@ public class Event {
         this.gender = gender;
     }
     
+    public Integer getMaxParticipants() {
+        return maxParticipants;
+    }
+    
+    public void setMaxParticipants(Integer maxParticipants) {
+        this.maxParticipants = maxParticipants;
+    }
+    
+    public Integer getCurrentParticipants() {
+        return currentParticipants;
+    }
+    
+    public void setCurrentParticipants(Integer currentParticipants) {
+        this.currentParticipants = currentParticipants;
+    }
+    
+    public Boolean getIsCapacityLimited() {
+        return isCapacityLimited;
+    }
+    
+    public void setIsCapacityLimited(Boolean isCapacityLimited) {
+        this.isCapacityLimited = isCapacityLimited;
+    }
+    
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -238,6 +284,62 @@ public class Event {
      */
     public boolean isTeam() {
         return EventType.TEAM.getCode().equals(eventType);
+    }
+    
+    /**
+     * 判断项目是否已满员
+     * @return true如果项目已满员
+     */
+    public boolean isFull() {
+        if (!Boolean.TRUE.equals(isCapacityLimited)) {
+            return false;
+        }
+        return currentParticipants != null && maxParticipants != null && 
+               currentParticipants >= maxParticipants;
+    }
+    
+    /**
+     * 获取剩余名额
+     * @return 剩余名额数量，如果无限制则返回null
+     */
+    public Integer getRemainingSlots() {
+        if (!Boolean.TRUE.equals(isCapacityLimited)) {
+            return null;
+        }
+        if (currentParticipants == null || maxParticipants == null) {
+            return maxParticipants;
+        }
+        return Math.max(0, maxParticipants - currentParticipants);
+    }
+    
+    /**
+     * 检查是否可以报名
+     * @return true如果可以报名
+     */
+    public boolean canRegister() {
+        return !isFull();
+    }
+    
+    /**
+     * 增加报名人数
+     * @param count 增加的人数
+     */
+    public void increaseParticipants(int count) {
+        if (currentParticipants == null) {
+            currentParticipants = 0;
+        }
+        currentParticipants += count;
+    }
+    
+    /**
+     * 减少报名人数
+     * @param count 减少的人数
+     */
+    public void decreaseParticipants(int count) {
+        if (currentParticipants == null) {
+            currentParticipants = 0;
+        }
+        currentParticipants = Math.max(0, currentParticipants - count);
     }
     
     @Override
