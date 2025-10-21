@@ -98,6 +98,10 @@ public class SecurityConfig {
                 .requestMatchers("/actuator/**").permitAll()
                 // 允许报名数据汇总健康检查接口
                 .requestMatchers("/api/registrations/health").permitAll()
+                // 允许运动员管理健康检查接口
+                .requestMatchers("/api/athletes/health").permitAll()
+                // 允许组别管理健康检查接口
+                .requestMatchers("/api/groups/health").permitAll()
                 // 允许静态资源访问
                 .requestMatchers("/static/**", "/css/**", "/js/**", "/images/**").permitAll()
                 // 其他所有请求都需要认证
