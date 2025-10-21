@@ -228,7 +228,7 @@ public class AuthService {
             
             // 步骤5: 生成JWT Token
             logger.info("步骤5: 生成JWT Token");
-            String token = JwtUtil.generateToken(teamId.toString(), "TEAM", null);
+            String token = JwtUtil.generateToken(teamId.toString(), "TEAM", team.getOrgCode());
             logger.info("✅ JWT Token生成成功: {}", token.substring(0, Math.min(50, token.length())) + "...");
             
             // 步骤6: 构建响应

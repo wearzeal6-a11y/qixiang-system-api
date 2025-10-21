@@ -4,7 +4,11 @@ import com.qixiang.qixiang_system_api.dto.TeamSelectionDTO;
 import com.qixiang.qixiang_system_api.entity.Team;
 import com.qixiang.qixiang_system_api.repository.SportsMeetRepository;
 import com.qixiang.qixiang_system_api.repository.TeamRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,6 +25,8 @@ import java.util.stream.Collectors;
 @Transactional
 public class TeamService {
     
+    private static final Logger logger = LoggerFactory.getLogger(TeamService.class);
+    
     @Autowired
     private TeamRepository teamRepository;
     
@@ -35,8 +41,10 @@ public class TeamService {
      * @param orgCode 机构代码
      * @return 参赛单位选择列表
      */
+    @Cacheable(value = "teams", key = "'org_code:' + #orgCode")
     @Transactional(readOnly = true)
     public List<TeamSelectionDTO> getTeamsByOrgCode(String orgCode) {
+        logger.info("从数据库根据机构代码获取参赛单位列表: orgCode={}", orgCode);
         // 直接查询该机构下的所有激活状态参赛单位
         List<TeamSelectionDTO> teams = teamRepository.findTeamSelectionByOrgCode(orgCode);
         
@@ -75,8 +83,10 @@ public class TeamService {
      * @param sportsMeetId 运动会ID
      * @return 参赛单位选择列表
      */
+    @Cacheable(value = "teams", key = "'sports_meet:' + #sportsMeetId")
     @Transactional(readOnly = true)
     public List<TeamSelectionDTO> getTeamsBySportsMeetId(Long sportsMeetId) {
+        logger.info("从数据库根据运动会ID获取参赛单位列表: sportsMeetId={}", sportsMeetId);
         return teamRepository.findTeamSelectionBySportsMeetId(sportsMeetId);
     }
     
@@ -109,7 +119,9 @@ public class TeamService {
      * @param team 参赛单位信息
      * @return 创建的参赛单位
      */
+    @CacheEvict(value = "teams", allEntries = true)
     public Team createTeam(Team team) {
+        logger.info("创建参赛单位，清除所有参赛单位缓存: {}", team.getName());
         // 验证参赛单位名称在同一运动会中是否唯一
         if (teamRepository.existsByNameAndSportsMeetId(team.getName(), team.getSportsMeetId(), null)) {
             throw new IllegalArgumentException("参赛单位名称在该运动会中已存在");
@@ -131,7 +143,9 @@ public class TeamService {
      * @param team 参赛单位信息
      * @return 更新后的参赛单位
      */
+    @CacheEvict(value = "teams", allEntries = true)
     public Team updateTeam(Team team) {
+        logger.info("更新参赛单位，清除所有参赛单位缓存: {}", team.getName());
         // 验证参赛单位是否存在
         Team existingTeam = teamRepository.findById(team.getId())
                 .orElseThrow(() -> new IllegalArgumentException("参赛单位不存在"));
@@ -156,7 +170,9 @@ public class TeamService {
      * 
      * @param teamId 参赛单位ID
      */
+    @CacheEvict(value = "teams", allEntries = true)
     public void deleteTeam(Long teamId) {
+        logger.info("删除参赛单位，清除所有参赛单位缓存: teamId={}", teamId);
         if (!teamRepository.existsById(teamId)) {
             throw new IllegalArgumentException("参赛单位不存在");
         }

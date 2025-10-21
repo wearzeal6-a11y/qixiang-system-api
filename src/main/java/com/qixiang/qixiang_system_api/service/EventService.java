@@ -5,6 +5,7 @@ import com.qixiang.qixiang_system_api.repository.EventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -26,8 +27,9 @@ public class EventService {
      * @param groupId 竞赛组别ID
      * @return 可参加的比赛项目列表
      */
+    @Cacheable(value = "events", key = "'group:' + #groupId")
     public List<Event> getEventsByGroupId(Long groupId) {
-        logger.info("根据组别ID {} 获取可参加的项目", groupId);
+        logger.info("从数据库根据组别ID {} 获取可参加的项目", groupId);
         
         try {
             List<Event> events = eventRepository.findEventsByGroupId(groupId);
@@ -44,8 +46,9 @@ public class EventService {
      * 获取所有比赛项目
      * @return 所有比赛项目列表
      */
+    @Cacheable(value = "events", key = "'all'")
     public List<Event> getAllEvents() {
-        logger.info("获取所有比赛项目");
+        logger.info("从数据库获取所有比赛项目");
         
         try {
             List<Event> events = eventRepository.findAll();
@@ -82,8 +85,9 @@ public class EventService {
      * @param groupId 竞赛组别ID
      * @return 必报项目列表
      */
+    @Cacheable(value = "events", key = "'mandatory:' + #groupId")
     public List<Event> getMandatoryEventsByGroupId(Long groupId) {
-        logger.info("根据组别ID {} 获取必报项目", groupId);
+        logger.info("从数据库根据组别ID {} 获取必报项目", groupId);
         
         try {
             List<Event> events = eventRepository.findMandatoryEventsByGroupId(groupId);
@@ -101,8 +105,9 @@ public class EventService {
      * @param groupId 竞赛组别ID
      * @return 选报项目列表
      */
+    @Cacheable(value = "events", key = "'optional:' + #groupId")
     public List<Event> getOptionalEventsByGroupId(Long groupId) {
-        logger.info("根据组别ID {} 获取选报项目", groupId);
+        logger.info("从数据库根据组别ID {} 获取选报项目", groupId);
         
         try {
             List<Event> events = eventRepository.findOptionalEventsByGroupId(groupId);

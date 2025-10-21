@@ -9,6 +9,8 @@ import com.qixiang.qixiang_system_api.repository.GroupRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -39,8 +41,9 @@ public class AthleteService {
      * @param teamId 参赛单位ID
      * @return 运动员DTO列表
      */
+    @Cacheable(value = "athletes", key = "'team:' + #teamId")
     public List<AthleteDTO> getAthletesByTeamId(Long teamId) {
-        logger.info("查询参赛单位 {} 的运动员列表", teamId);
+        logger.info("从数据库查询参赛单位 {} 的运动员列表", teamId);
         
         try {
             // 获取运动员实体列表
@@ -65,8 +68,9 @@ public class AthleteService {
      * @param athleteDTO 运动员DTO
      * @return 保存后的运动员DTO
      */
+    @CacheEvict(value = "athletes", allEntries = true)
     public AthleteDTO addAthlete(AthleteDTO athleteDTO) {
-        logger.info("添加新运动员: {}", athleteDTO.getName());
+        logger.info("添加新运动员，清除所有运动员缓存: {}", athleteDTO.getName());
         
         try {
             // 验证组别是否存在
@@ -114,8 +118,9 @@ public class AthleteService {
      * @param teamId 参赛单位ID（用于权限验证）
      * @return 更新后的运动员DTO
      */
+    @CacheEvict(value = "athletes", allEntries = true)
     public AthleteDTO updateAthlete(Long id, AthleteDTO athleteDTO, Long teamId) {
-        logger.info("更新运动员信息: ID={}, 新姓名={}", id, athleteDTO.getName());
+        logger.info("更新运动员信息，清除所有运动员缓存: ID={}, 新姓名={}", id, athleteDTO.getName());
         
         try {
             // 验证运动员是否存在且属于该参赛单位
@@ -172,8 +177,9 @@ public class AthleteService {
      * @param id 运动员ID
      * @param teamId 参赛单位ID（用于权限验证）
      */
+    @CacheEvict(value = "athletes", allEntries = true)
     public void deleteAthlete(Long id, Long teamId) {
-        logger.info("删除运动员: ID={}", id);
+        logger.info("删除运动员，清除所有运动员缓存: ID={}", id);
         
         try {
             // 验证运动员是否存在且属于该参赛单位

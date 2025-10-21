@@ -81,6 +81,9 @@ public class RegistrationService {
                 processGroupStatistics(teamId, group, summary);
             }
             
+            // 4. 添加总体统计信息
+            addOverallStatistics(teamId, teamGroups, summary);
+            
             logger.info("报名数据汇总完成，共生成 {} 条统计记录", summary.size());
             
         } catch (Exception e) {
@@ -390,43 +393,105 @@ public class RegistrationService {
      */
     @Transactional
     public void updateAthleteRegistrations(Long teamId, Long athleteId, List<Long> eventIds) {
-        logger.info("更新参赛单位 {} 运动员 {} 的项目报名，项目数量: {}", teamId, athleteId, eventIds.size());
+        logger.info("=== 开始更新运动员项目报名 ===");
+        logger.info("参赛单位ID: {}, 运动员ID: {}, 项目数量: {}, 项目IDs: {}", teamId, athleteId, eventIds.size(), eventIds);
         
         try {
             // 验证运动员属于该参赛单位
+            logger.info("步骤1: 验证运动员 {} 属于参赛单位 {}", athleteId, teamId);
             Athlete athlete = athleteRepository.findById(athleteId)
                 .orElseThrow(() -> new RuntimeException("运动员不存在，ID: " + athleteId));
             
             if (!athlete.getTeamId().equals(teamId)) {
+                logger.error("运动员 {} 的参赛单位ID {} 与请求的参赛单位ID {} 不匹配", athleteId, athlete.getTeamId(), teamId);
                 throw new RuntimeException("运动员不属于该参赛单位");
             }
+            logger.info("运动员验证通过 - ID: {}, 姓名: {}, 参赛单位ID: {}", athleteId, athlete.getName(), athlete.getTeamId());
             
             // 验证组别信息
+            logger.info("步骤2: 验证运动员所属组别，组别ID: {}", athlete.getGroupId());
             Group group = groupRepository.findById(athlete.getGroupId())
                 .orElseThrow(() -> new RuntimeException("运动员所属组别不存在，ID: " + athlete.getGroupId()));
             
+            logger.info("组别验证通过 - ID: {}, 名称: {}, 最大报名项目数: {}", group.getId(), group.getName(), group.getMaxEventsPerAthlete());
+            
             // 验证项目数量不超过限制
             if (eventIds.size() > group.getMaxEventsPerAthlete()) {
+                logger.error("报名项目数量 {} 超过限制 {}", eventIds.size(), group.getMaxEventsPerAthlete());
                 throw new RuntimeException("报名项目数量超过限制，最多允许 " + group.getMaxEventsPerAthlete() + " 个项目");
             }
+            logger.info("项目数量验证通过，{}/{}", eventIds.size(), group.getMaxEventsPerAthlete());
             
-            // 验证所有项目都是该组别可以参加的
+            // 获取现有报名记录（用于容量检查）
+            logger.info("步骤3: 获取现有报名记录");
+            List<Registration> existingRegistrations = registrationRepository.findByAthleteId(athleteId);
+            logger.info("找到 {} 条现有报名记录", existingRegistrations.size());
+            
+            // 验证所有项目都是该组别可以参加的，并检查容量限制
+            logger.info("步骤4: 验证项目是否属于该组别可参加的项目，并检查容量限制");
             for (Long eventId : eventIds) {
-                if (!eventRepository.isEventAvailableForGroup(eventId, athlete.getGroupId())) {
+                boolean isAvailable = eventRepository.isEventAvailableForGroup(eventId, athlete.getGroupId());
+                logger.info("项目 {} 对组别 {} 的可用性: {}", eventId, athlete.getGroupId(), isAvailable);
+                
+                if (!isAvailable) {
+                    logger.error("项目 ID {} 不属于组别 {} 可参加的项目", eventId, athlete.getGroupId());
                     throw new RuntimeException("项目 ID " + eventId + " 不属于该组别可参加的项目");
                 }
-            }
-            
-            // 删除现有的报名记录
-            List<Registration> existingRegistrations = registrationRepository.findByAthleteId(athleteId);
-            for (Registration registration : existingRegistrations) {
-                if (registration.getTeamId().equals(teamId)) {
-                    registrationRepository.delete(registration);
+                
+                // 检查项目容量限制
+                Event event = eventRepository.findById(eventId)
+                    .orElseThrow(() -> new RuntimeException("项目不存在，ID: " + eventId));
+                
+                if (Boolean.TRUE.equals(event.getIsCapacityLimited())) {
+                    // 计算当前报名人数（包括这个运动员将要报名的）
+                    int currentCount = registrationRepository.countByEventId(eventId);
+                    
+                    // 检查这个运动员是否已经报名了这个项目
+                    boolean alreadyRegistered = existingRegistrations.stream()
+                        .anyMatch(reg -> reg.getEventId().equals(eventId) && "CONFIRMED".equals(reg.getStatus()));
+                    
+                    // 如果还没有报名，需要增加计数
+                    if (!alreadyRegistered) {
+                        currentCount++;
+                    }
+                    
+                    logger.info("项目 {} 容量检查: 当前={}, 限制={}, 运动员已报名={}", 
+                        event.getName(), currentCount, event.getMaxParticipants(), alreadyRegistered);
+                    
+                    if (currentCount > event.getMaxParticipants()) {
+                        logger.error("项目 {} 已满员，当前报名人数 {} 超过限制 {}", 
+                            event.getName(), currentCount, event.getMaxParticipants());
+                        throw new RuntimeException("项目 " + event.getName() + " 已满员，无法报名");
+                    }
+                } else {
+                    logger.info("项目 {} 未设置容量限制", event.getName());
                 }
             }
+            logger.info("所有项目验证通过，共 {} 个项目", eventIds.size());
+            
+            // 删除现有的报名记录
+            logger.info("步骤5: 删除运动员 {} 的现有报名记录", athleteId);
+            
+            int deletedCount = 0;
+            for (Registration registration : existingRegistrations) {
+                if (registration.getTeamId().equals(teamId)) {
+                    logger.info("删除报名记录: 运动员ID: {}, 项目ID: {}, 状态: {}", 
+                        registration.getAthleteId(), registration.getEventId(), registration.getStatus());
+                    registrationRepository.delete(registration);
+                    deletedCount++;
+                } else {
+                    logger.warn("跳过不属于参赛单位 {} 的报名记录: 运动员ID: {}, 项目ID: {}", 
+                        teamId, registration.getAthleteId(), registration.getEventId());
+                }
+            }
+            logger.info("删除完成，共删除 {} 条报名记录", deletedCount);
             
             // 创建新的报名记录
+            logger.info("步骤6: 创建新的报名记录");
+            int createdCount = 0;
             for (Long eventId : eventIds) {
+                logger.info("创建报名记录: 运动员ID: {}, 项目ID: {}", athleteId, eventId);
+                
                 Registration registration = new Registration();
                 registration.setTeamId(teamId);
                 registration.setGroupId(athlete.getGroupId());
@@ -435,13 +500,21 @@ public class RegistrationService {
                 registration.setStatus("CONFIRMED");
                 registration.setRegistrationTime(java.time.LocalDateTime.now());
                 
-                registrationRepository.save(registration);
+                Registration saved = registrationRepository.save(registration);
+                logger.info("保存报名记录成功: ID: {}, 运动员ID: {}, 项目ID: {}", 
+                    saved.getId(), saved.getAthleteId(), saved.getEventId());
+                createdCount++;
             }
+            logger.info("创建完成，共创建 {} 条新报名记录", createdCount);
             
-            logger.info("更新运动员 {} 项目报名成功，保存了 {} 个项目", athleteId, eventIds.size());
+            logger.info("=== 运动员 {} 项目报名更新成功 ===", athleteId);
+            logger.info("最终状态: 报名项目数: {}, 项目IDs: {}", eventIds.size(), eventIds);
             
         } catch (Exception e) {
-            logger.error("更新运动员 {} 项目报名失败: {}", athleteId, e.getMessage(), e);
+            logger.error("=== 运动员 {} 项目报名更新失败 ===", athleteId);
+            logger.error("错误类型: {}", e.getClass().getSimpleName());
+            logger.error("错误信息: {}", e.getMessage());
+            logger.error("完整堆栈跟踪:", e);
             throw new RuntimeException("更新运动员项目报名失败: " + e.getMessage(), e);
         }
     }
