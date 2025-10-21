@@ -4,6 +4,7 @@ import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.SignatureException;
 import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.util.Date;
@@ -16,6 +17,7 @@ import java.util.function.Function;
  * 负责JWT Token的生成、解析和验证
  * 使用JJWT库实现
  */
+@Component
 public class JwtUtil {
     
     /**
@@ -43,16 +45,37 @@ public class JwtUtil {
     }
     
     /**
-     * 生成JWT Token
+     * 生成JWT Token（默认方法，向后兼容）
      * @param username 用户名
      * @return JWT Token字符串
      */
     public static String generateToken(String username) {
+        return generateToken(username, null, null);
+    }
+    
+    /**
+     * 生成JWT Token（支持角色信息）
+     * @param username 用户名或ID
+     * @param role 用户角色（ADMIN/TEAM）
+     * @param orgCode 机构代码（可选）
+     * @return JWT Token字符串
+     */
+    public static String generateToken(String username, String role, String orgCode) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("sub", username);
         claims.put("iss", ISSUER);
         claims.put("iat", new Date(System.currentTimeMillis()));
         claims.put("type", "Bearer");
+        
+        // 添加角色信息
+        if (role != null) {
+            claims.put("role", role);
+        }
+        
+        // 添加机构代码（仅管理员需要）
+        if (orgCode != null) {
+            claims.put("orgCode", orgCode);
+        }
         
         return createToken(claims, username);
     }
@@ -102,6 +125,24 @@ public class JwtUtil {
      */
     public static String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
+    }
+    
+    /**
+     * 从Token中提取角色信息
+     * @param token JWT Token字符串
+     * @return 角色信息
+     */
+    public static String extractRole(String token) {
+        return extractClaim(token, claims -> claims.get("role", String.class));
+    }
+    
+    /**
+     * 从Token中提取机构代码
+     * @param token JWT Token字符串
+     * @return 机构代码
+     */
+    public static String extractOrgCode(String token) {
+        return extractClaim(token, claims -> claims.get("orgCode", String.class));
     }
     
     /**
@@ -206,7 +247,9 @@ public class JwtUtil {
     public static String refreshToken(String token) {
         try {
             String username = extractUsername(token);
-            return generateToken(username);
+            String role = extractRole(token);
+            String orgCode = extractOrgCode(token);
+            return generateToken(username, role, orgCode);
         } catch (Exception e) {
             return null;
         }

@@ -2,7 +2,9 @@ package com.qixiang.qixiang_system_api.controller;
 
 import com.qixiang.qixiang_system_api.dto.LoginRequest;
 import com.qixiang.qixiang_system_api.dto.LoginResponse;
+import com.qixiang.qixiang_system_api.entity.Team;
 import com.qixiang.qixiang_system_api.service.AuthService;
+import com.qixiang.qixiang_system_api.service.TeamService;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,15 +31,18 @@ public class AuthController {
     @Autowired
     private AuthService authService;
     
+    @Autowired
+    private TeamService teamService;
+    
     /**
-     * 用户登录接口
+     * 统一登录接口（支持管理员和参赛单位）
      * @param loginRequest 登录请求参数
      * @return JWT Token响应
      */
     @PostMapping("/login")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest loginRequest) {
-        logger.info("收到登录请求: organizationCode={}, username={}", 
-                   loginRequest.getOrganizationCode(), loginRequest.getUsername());
+    public ResponseEntity<?> login(@RequestBody LoginRequest loginRequest) {
+        logger.info("收到登录请求: organizationCode={}, username={}, authType={}", 
+                   loginRequest.getOrganizationCode(), loginRequest.getUsername(), loginRequest.getAuthType());
         
         try {
             // 调用认证服务处理登录
@@ -51,24 +56,27 @@ public class AuthController {
             response.put("user", Map.of(
                 "id", loginResponse.getUserId(),
                 "username", loginResponse.getUsername(),
-                "organizationCode", loginResponse.getOrganizationCode(),
+                "organizationCode", loginResponse.getOrganizationCode() != null ? loginResponse.getOrganizationCode() : "",
                 "role", loginResponse.getRole()
             ));
             
-            logger.info("用户登录成功: organizationCode={}, username={}", 
-                       loginRequest.getOrganizationCode(), loginRequest.getUsername());
+            logger.info("登录成功: organizationCode={}, username={}, authType={}, role={}", 
+                       loginRequest.getOrganizationCode(), loginRequest.getUsername(), 
+                       loginRequest.getAuthType(), loginResponse.getRole());
             
             return ResponseEntity.ok(response);
             
         } catch (AuthService.AuthenticationException e) {
-            logger.warn("登录失败: organizationCode={}, username={}, error={}", 
-                       loginRequest.getOrganizationCode(), loginRequest.getUsername(), e.getMessage());
+            logger.warn("登录失败: organizationCode={}, username={}, authType={}, error={}", 
+                       loginRequest.getOrganizationCode(), loginRequest.getUsername(), 
+                       loginRequest.getAuthType(), e.getMessage());
             
             return createErrorResponse(HttpStatus.UNAUTHORIZED, e.getMessage());
             
         } catch (Exception e) {
-            logger.error("登录过程中发生系统异常: organizationCode={}, username={}, error={}", 
-                        loginRequest.getOrganizationCode(), loginRequest.getUsername(), e.getMessage(), e);
+            logger.error("登录过程中发生系统异常: organizationCode={}, username={}, authType={}, error={}", 
+                        loginRequest.getOrganizationCode(), loginRequest.getUsername(), 
+                        loginRequest.getAuthType(), e.getMessage(), e);
             
             return createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "登录失败，请稍后重试");
         }
@@ -183,6 +191,331 @@ public class AuthController {
             
             return createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "登出失败，请稍后重试");
         }
+    }
+    
+    /**
+     * 简单测试POST请求
+     * @return 测试结果
+     */
+    @PostMapping("/test-post")
+    public ResponseEntity<?> testPost() {
+        logger.info("收到简单POST请求测试");
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "POST请求成功");
+        response.put("timestamp", LocalDateTime.now());
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 测试LoginRequest反序列化
+     * @param loginRequest 登录请求对象
+     * @return 测试结果
+     */
+    @PostMapping("/test-login-request")
+    public ResponseEntity<?> testLoginRequest(@RequestBody LoginRequest loginRequest) {
+        logger.info("收到LoginRequest测试: {}", loginRequest);
+        Map<String, Object> response = new HashMap<>();
+        response.put("message", "LoginRequest反序列化成功");
+        response.put("loginRequest", loginRequest);
+        response.put("timestamp", LocalDateTime.now());
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 直接测试参赛单位登录（绕过AuthService）
+     * @param teamId 参赛单位ID
+     * @return 登录结果
+     */
+    @PostMapping("/direct-team-login/{teamId}")
+    public ResponseEntity<?> directTeamLogin(@PathVariable Long teamId) {
+        logger.info("直接测试参赛单位登录: teamId={}", teamId);
+        
+        try {
+            // 直接在Controller中处理参赛单位登录
+            Team team = teamService.getTeamById(teamId);
+            logger.info("查询到参赛单位: {}", team.getName());
+            
+            // 验证状态
+            if (!"ACTIVE".equals(team.getStatus())) {
+                return createErrorResponse(HttpStatus.UNAUTHORIZED, "参赛单位状态不活跃");
+            }
+            
+            // 验证密码
+            String testPassword = "admin123";
+            boolean passwordMatch = authService.validatePassword(testPassword, team.getPassword());
+            if (!passwordMatch) {
+                return createErrorResponse(HttpStatus.UNAUTHORIZED, "密码错误");
+            }
+            
+            // 生成Token
+            String token = com.qixiang.qixiang_system_api.util.JwtUtil.generateToken(teamId.toString(), "TEAM", null);
+            
+            // 构建响应
+            Map<String, Object> response = new HashMap<>();
+            response.put("token", token);
+            response.put("tokenType", "Bearer");
+            response.put("expiresAt", LocalDateTime.now().plusHours(24));
+            response.put("user", Map.of(
+                "id", teamId,
+                "username", team.getName(),
+                "organizationCode", "TEST001",
+                "role", "TEAM"
+            ));
+            
+            logger.info("直接参赛单位登录成功: teamId={}, teamName={}", teamId, team.getName());
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            logger.error("直接参赛单位登录失败: teamId={}, error={}", teamId, e.getMessage(), e);
+            return createErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR, "登录失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 简单测试参数接收
+     * @param organizationCode 机构代码
+     * @param username 用户名
+     * @param password 密码
+     * @param authType 认证类型
+     * @return 测试结果
+     */
+    @GetMapping("/test-params")
+    public ResponseEntity<?> testParams(
+            @RequestParam String organizationCode,
+            @RequestParam String username,
+            @RequestParam String password,
+            @RequestParam String authType) {
+        
+        logger.info("收到参数测试: organizationCode={}, username={}, password={}, authType={}", 
+                   organizationCode, username, password, authType);
+        
+        Map<String, Object> response = new HashMap<>();
+        response.put("success", true);
+        response.put("message", "参数接收成功");
+        response.put("params", Map.of(
+            "organizationCode", organizationCode,
+            "username", username,
+            "password", password,
+            "authType", authType
+        ));
+        response.put("timestamp", LocalDateTime.now());
+        
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 通过GET请求测试参赛单位登录（模拟POST参数）
+     * @param organizationCode 机构代码
+     * @param username 用户名
+     * @param password 密码
+     * @param authType 认证类型
+     * @return 登录结果
+     */
+    @GetMapping("/test-login-get")
+    public ResponseEntity<?> testLoginGet(
+            @RequestParam String organizationCode,
+            @RequestParam String username,
+            @RequestParam String password,
+            @RequestParam String authType) {
+        
+        logger.info("收到GET测试登录请求: organizationCode={}, username={}, authType={}", 
+                   organizationCode, username, authType);
+        
+        Map<String, Object> debugInfo = new HashMap<>();
+        
+        try {
+            // 步骤1: 创建LoginRequest对象
+            logger.info("步骤1: 创建LoginRequest对象");
+            LoginRequest loginRequest = new LoginRequest(organizationCode, username, password, authType);
+            debugInfo.put("step1", "✅ LoginRequest创建成功");
+            debugInfo.put("loginRequest", loginRequest.toString());
+            
+            // 步骤2: 验证认证类型
+            logger.info("步骤2: 验证认证类型");
+            boolean isTeamAuth = loginRequest.isTeamAuth();
+            debugInfo.put("step2", isTeamAuth ? "✅ 认证类型为TEAM" : "❌ 认证类型不是TEAM");
+            
+            if (isTeamAuth) {
+                // 步骤3: 解析teamId
+                logger.info("步骤3: 解析teamId");
+                try {
+                    Long teamId = loginRequest.getTeamId();
+                    debugInfo.put("step3", "✅ teamId解析成功: " + teamId);
+                    
+                    // 步骤4: 查询参赛单位
+                    logger.info("步骤4: 查询参赛单位");
+                    try {
+                        Team team = teamService.getTeamById(teamId);
+                        debugInfo.put("step4", "✅ 参赛单位查询成功: " + team.getName());
+                        debugInfo.put("teamInfo", Map.of(
+                            "id", team.getId(),
+                            "name", team.getName(),
+                            "status", team.getStatus(),
+                            "hasPassword", team.getPassword() != null && !team.getPassword().isEmpty()
+                        ));
+                        
+                        // 步骤5: 验证密码
+                        logger.info("步骤5: 验证密码");
+                        boolean passwordMatch = authService.validatePassword(password, team.getPassword());
+                        debugInfo.put("step5", passwordMatch ? "✅ 密码验证成功" : "❌ 密码验证失败");
+                        debugInfo.put("passwordTest", Map.of(
+                            "inputPassword", password,
+                            "inputLength", password.length(),
+                            "storedPassword", team.getPassword(),
+                            "storedLength", team.getPassword() != null ? team.getPassword().length() : 0
+                        ));
+                        
+                    } catch (Exception e) {
+                        debugInfo.put("step4", "❌ 参赛单位查询失败: " + e.getMessage());
+                        throw e;
+                    }
+                    
+                } catch (NumberFormatException e) {
+                    debugInfo.put("step3", "❌ teamId解析失败: " + e.getMessage());
+                    throw e;
+                }
+            }
+            
+            // 步骤6: 调用认证服务处理登录
+            logger.info("步骤6: 调用认证服务处理登录");
+            LoginResponse loginResponse = authService.login(loginRequest);
+            debugInfo.put("step6", "✅ 认证服务登录成功");
+            
+            // 构建成功响应
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", "GET测试登录成功");
+            response.put("debugInfo", debugInfo);
+            response.put("token", loginResponse.getToken());
+            response.put("tokenType", loginResponse.getTokenType());
+            response.put("expiresAt", loginResponse.getExpiresAt() != null ? loginResponse.getExpiresAt().toString() : "");
+            response.put("user", Map.of(
+                "id", loginResponse.getUserId(),
+                "username", loginResponse.getUsername(),
+                "organizationCode", loginResponse.getOrganizationCode() != null ? loginResponse.getOrganizationCode() : "",
+                "role", loginResponse.getRole()
+            ));
+            
+            logger.info("GET测试登录成功: organizationCode={}, username={}, role={}", 
+                       organizationCode, username, loginResponse.getRole());
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            logger.error("GET测试登录失败: organizationCode={}, username={}, error={}", 
+                        organizationCode, username, e.getMessage(), e);
+            
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", false);
+            response.put("message", "GET测试登录失败: " + e.getMessage());
+            response.put("debugInfo", debugInfo);
+            response.put("errorDetails", e.getClass().getSimpleName() + ": " + e.getMessage());
+            response.put("timestamp", LocalDateTime.now());
+            
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        }
+    }
+
+    /**
+     * 直接测试AuthService teamLogin方法
+     * @param teamId 参赛单位ID
+     * @return 测试结果
+     */
+    @GetMapping("/test-auth-service-team/{teamId}")
+    public ResponseEntity<?> testAuthServiceTeam(@PathVariable Long teamId) {
+        logger.info("直接测试AuthService teamLogin: teamId={}", teamId);
+        
+        Map<String, Object> result = new HashMap<>();
+        
+        try {
+            LoginRequest loginRequest = new LoginRequest("TEST001", teamId.toString(), "admin123", "TEAM");
+            logger.info("创建LoginRequest: {}", loginRequest);
+            
+            LoginResponse loginResponse = authService.login(loginRequest);
+            logger.info("AuthService teamLogin成功");
+            
+            result.put("success", true);
+            result.put("message", "AuthService teamLogin成功");
+            result.put("loginResponse", Map.of(
+                "token", loginResponse.getToken() != null ? "TOKEN_OK" : "TOKEN_NULL",
+                "tokenType", loginResponse.getTokenType(),
+                "expiresAt", loginResponse.getExpiresAt() != null ? loginResponse.getExpiresAt().toString() : "EXPIRES_AT_NULL",
+                "userId", loginResponse.getUserId(),
+                "username", loginResponse.getUsername(),
+                "organizationCode", loginResponse.getOrganizationCode(),
+                "role", loginResponse.getRole()
+            ));
+            
+            return ResponseEntity.ok(result);
+            
+        } catch (Exception e) {
+            logger.error("AuthService teamLogin失败: {}", e.getMessage(), e);
+            result.put("success", false);
+            result.put("message", "AuthService teamLogin失败: " + e.getMessage());
+            result.put("error", e.getClass().getSimpleName());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(result);
+        }
+    }
+
+    /**
+     * 测试参赛单位登录步骤
+     * @param teamId 参赛单位ID
+     * @return 测试结果
+     */
+    @GetMapping("/test-team-login/{teamId}")
+    public ResponseEntity<?> testTeamLoginSteps(@PathVariable Long teamId) {
+        logger.info("测试参赛单位登录步骤: teamId={}", teamId);
+        
+        Map<String, Object> result = new HashMap<>();
+        
+        try {
+            // 步骤1: 查询参赛单位
+            logger.info("步骤1: 查询参赛单位");
+            Team team = teamService.getTeamById(teamId);
+            result.put("step1", "✅ 参赛单位查询成功: " + team.getName());
+            
+            // 步骤2: 验证状态
+            logger.info("步骤2: 验证参赛单位状态");
+            if (!"ACTIVE".equals(team.getStatus())) {
+                result.put("step2", "❌ 参赛单位状态不活跃: " + team.getStatus());
+                return ResponseEntity.ok(result);
+            }
+            result.put("step2", "✅ 参赛单位状态验证通过");
+            
+            // 步骤3: 测试密码验证
+            logger.info("步骤3: 测试密码验证");
+            String testPassword = "admin123";
+            boolean passwordMatch = authService.validatePassword(testPassword, team.getPassword());
+            result.put("step3", passwordMatch ? "✅ 密码验证成功" : "❌ 密码验证失败");
+            
+            // 步骤4: 测试JWT生成
+            logger.info("步骤4: 测试JWT生成");
+            try {
+                String token = com.qixiang.qixiang_system_api.util.JwtUtil.generateToken(teamId.toString(), "TEAM", null);
+                result.put("step4", "✅ JWT生成成功: " + token.substring(0, Math.min(50, token.length())) + "...");
+            } catch (Exception e) {
+                result.put("step4", "❌ JWT生成失败: " + e.getMessage());
+            }
+            
+            // 步骤5: 测试完整的登录流程
+            logger.info("步骤5: 测试完整的登录流程");
+            try {
+                LoginRequest loginRequest = new LoginRequest("TEST001", teamId.toString(), "admin123", "TEAM");
+                LoginResponse loginResponse = authService.login(loginRequest);
+                result.put("step5", "✅ 完整登录流程成功: " + loginResponse.getUsername());
+            } catch (Exception e) {
+                result.put("step5", "❌ 完整登录流程失败: " + e.getMessage());
+                logger.error("完整登录流程异常: {}", e.getMessage(), e);
+            }
+            
+            result.put("overall", "✅ 所有步骤测试完成");
+            
+        } catch (Exception e) {
+            logger.error("测试过程中发生异常: {}", e.getMessage(), e);
+            result.put("error", "❌ 测试失败: " + e.getMessage());
+        }
+        
+        return ResponseEntity.ok(result);
     }
     
     /**

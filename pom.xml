@@ -53,6 +53,13 @@
 			<scope>runtime</scope>
 		</dependency>
 		
+		<!-- MySQL Connector -->
+		<dependency>
+			<groupId>com.mysql</groupId>
+			<artifactId>mysql-connector-j</artifactId>
+			<scope>runtime</scope>
+		</dependency>
+		
 		<!-- JWT dependencies -->
 		<dependency>
 			<groupId>io.jsonwebtoken</groupId>

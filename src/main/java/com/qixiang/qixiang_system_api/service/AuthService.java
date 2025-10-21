@@ -2,7 +2,9 @@ package com.qixiang.qixiang_system_api.service;
 
 import com.qixiang.qixiang_system_api.dto.LoginRequest;
 import com.qixiang.qixiang_system_api.dto.LoginResponse;
+import com.qixiang.qixiang_system_api.entity.Team;
 import com.qixiang.qixiang_system_api.entity.User;
+import com.qixiang.qixiang_system_api.repository.TeamRepository;
 import com.qixiang.qixiang_system_api.repository.UserRepository;
 import com.qixiang.qixiang_system_api.util.JwtUtil;
 import org.slf4j.Logger;
@@ -28,62 +30,231 @@ public class AuthService {
     private UserRepository userRepository;
     
     @Autowired
+    private TeamRepository teamRepository;
+    
+    @Autowired
     private PasswordEncoder passwordEncoder;
     
     /**
-     * 用户登录验证
+     * 统一登录验证
+     * 支持管理员和参赛单位两种角色的认证
      * @param loginRequest 登录请求
      * @return 登录响应，包含JWT Token
      * @throws AuthenticationException 认证异常
      */
     public LoginResponse login(LoginRequest loginRequest) {
-        logger.info("用户登录尝试: organizationCode={}, username={}", 
+        logger.info("登录尝试: organizationCode={}, username={}, authType={}", 
+                   loginRequest.getOrganizationCode(), loginRequest.getUsername(), loginRequest.getAuthType());
+        
+        try {
+            if (loginRequest.isSuperAdminAuth()) {
+                return superAdminLogin(loginRequest);
+            } else if (loginRequest.isOrgAdminAuth()) {
+                return orgAdminLogin(loginRequest);
+            } else if (loginRequest.isTeamAuth()) {
+                return teamLogin(loginRequest);
+            } else {
+                throw new AuthenticationException("不支持的认证类型");
+            }
+        } catch (AuthenticationException e) {
+            logger.error("登录失败: organizationCode={}, username={}, authType={}, error={}", 
+                        loginRequest.getOrganizationCode(), loginRequest.getUsername(), 
+                        loginRequest.getAuthType(), e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            logger.error("登录过程中发生异常: organizationCode={}, username={}, authType={}, error={}", 
+                        loginRequest.getOrganizationCode(), loginRequest.getUsername(), 
+                        loginRequest.getAuthType(), e.getMessage(), e);
+            throw new AuthenticationException("登录失败，请稍后重试");
+        }
+    }
+    
+    /**
+     * 系统管理员登录认证
+     * @param loginRequest 登录请求
+     * @return 登录响应
+     * @throws AuthenticationException 认证异常
+     */
+    private LoginResponse superAdminLogin(LoginRequest loginRequest) {
+        logger.info("系统管理员登录尝试: organizationCode={}, username={}", 
+                   loginRequest.getOrganizationCode(), loginRequest.getUsername());
+        
+        // 1. 查询系统管理员用户（organizationCode可以为SYSTEM或任意值）
+        User user = userRepository.findByOrganizationCodeAndUsername(
+                loginRequest.getOrganizationCode(), 
+                loginRequest.getUsername()
+        ).orElseThrow(() -> {
+            logger.warn("系统管理员用户不存在: organizationCode={}, username={}", 
+                       loginRequest.getOrganizationCode(), loginRequest.getUsername());
+            return new AuthenticationException("用户名或密码错误");
+        });
+        
+        // 2. 验证用户角色
+        if (!"SUPER_ADMIN".equals(user.getRole())) {
+            logger.warn("用户不是系统管理员: userId={}, role={}", user.getId(), user.getRole());
+            throw new AuthenticationException("权限不足");
+        }
+        
+        // 3. 验证用户状态
+        validateUserStatus(user);
+        
+        // 4. 验证密码
+        verifyPassword(loginRequest.getPassword(), user.getPassword());
+        
+        // 5. 生成JWT Token（包含角色信息）
+        String token = JwtUtil.generateToken(user.getUsername(), "SUPER_ADMIN", user.getOrganizationCode());
+        
+        // 6. 更新最后登录时间
+        updateLastLoginTime(user);
+        
+        // 7. 构建响应
+        LoginResponse response = new LoginResponse(
+                token,
+                user.getId(),
+                user.getUsername(),
+                user.getOrganizationCode(),
+                "SUPER_ADMIN"
+        );
+        
+        logger.info("系统管理员登录成功: organizationCode={}, username={}", 
+                   loginRequest.getOrganizationCode(), loginRequest.getUsername());
+        
+        return response;
+    }
+    
+    /**
+     * 使用单位登录认证（机构管理员）
+     * @param loginRequest 登录请求
+     * @return 登录响应
+     * @throws AuthenticationException 认证异常
+     */
+    private LoginResponse orgAdminLogin(LoginRequest loginRequest) {
+        logger.info("使用单位登录尝试: organizationCode={}, username={}", 
+                   loginRequest.getOrganizationCode(), loginRequest.getUsername());
+        
+        // 1. 查询使用单位用户
+        User user = userRepository.findByOrganizationCodeAndUsername(
+                loginRequest.getOrganizationCode(), 
+                loginRequest.getUsername()
+        ).orElseThrow(() -> {
+            logger.warn("使用单位用户不存在: organizationCode={}, username={}", 
+                       loginRequest.getOrganizationCode(), loginRequest.getUsername());
+            return new AuthenticationException("用户名或密码错误");
+        });
+        
+        // 2. 验证用户角色
+        if (!"ORG_ADMIN".equals(user.getRole())) {
+            logger.warn("用户不是使用单位管理员: userId={}, role={}", user.getId(), user.getRole());
+            throw new AuthenticationException("权限不足");
+        }
+        
+        // 3. 验证用户状态
+        validateUserStatus(user);
+        
+        // 4. 验证密码
+        verifyPassword(loginRequest.getPassword(), user.getPassword());
+        
+        // 5. 生成JWT Token（包含角色信息）
+        String token = JwtUtil.generateToken(user.getUsername(), "ORG_ADMIN", user.getOrganizationCode());
+        
+        // 6. 更新最后登录时间
+        updateLastLoginTime(user);
+        
+        // 7. 构建响应
+        LoginResponse response = new LoginResponse(
+                token,
+                user.getId(),
+                user.getUsername(),
+                user.getOrganizationCode(),
+                "ORG_ADMIN"
+        );
+        
+        logger.info("使用单位登录成功: organizationCode={}, username={}", 
+                   loginRequest.getOrganizationCode(), loginRequest.getUsername());
+        
+        return response;
+    }
+    
+    /**
+     * 参赛单位登录认证
+     * @param loginRequest 登录请求
+     * @return 登录响应
+     * @throws AuthenticationException 认证异常
+     */
+    private LoginResponse teamLogin(LoginRequest loginRequest) {
+        logger.info("参赛单位登录尝试: organizationCode={}, teamId={}", 
                    loginRequest.getOrganizationCode(), loginRequest.getUsername());
         
         try {
-            // 1. 查询用户
-            User user = userRepository.findByOrganizationCodeAndUsername(
-                    loginRequest.getOrganizationCode(), 
-                    loginRequest.getUsername()
-            ).orElseThrow(() -> {
-                logger.warn("用户不存在: organizationCode={}, username={}", 
-                           loginRequest.getOrganizationCode(), loginRequest.getUsername());
-                return new AuthenticationException("用户名或密码错误");
+            // 步骤1: 解析teamId
+            logger.info("步骤1: 解析teamId");
+            Long teamId = loginRequest.getTeamId();
+            logger.info("✅ 解析的teamId: {}", teamId);
+            
+            // 步骤2: 查询参赛单位
+            logger.info("步骤2: 查询参赛单位");
+            Team team = teamRepository.findById(teamId).orElseThrow(() -> {
+                logger.warn("参赛单位不存在: teamId={}", teamId);
+                return new AuthenticationException("参赛单位不存在或密码错误");
             });
+            logger.info("✅ 找到参赛单位: id={}, name={}, status={}, orgCode={}", team.getId(), team.getName(), team.getStatus(), team.getOrgCode());
             
-            // 2. 验证用户状态
-            validateUserStatus(user);
+            // 步骤3: 验证参赛单位归属机构
+            logger.info("步骤3: 验证参赛单位归属机构");
+            if (team.getOrgCode() == null || !team.getOrgCode().equals(loginRequest.getOrganizationCode())) {
+                logger.warn("参赛单位不属于指定机构: teamId={}, teamOrgCode={}, requestOrgCode={}", 
+                           teamId, team.getOrgCode(), loginRequest.getOrganizationCode());
+                throw new AuthenticationException("参赛单位不属于指定机构");
+            }
+            logger.info("✅ 参赛单位归属机构验证通过");
             
-            // 3. 验证密码
-            verifyPassword(loginRequest.getPassword(), user.getPassword());
+            // 步骤4: 验证参赛单位状态
+            logger.info("步骤4: 验证参赛单位状态");
+            validateTeamStatus(team);
+            logger.info("✅ 参赛单位状态验证通过");
             
-            // 4. 生成JWT Token
-            String token = JwtUtil.generateToken(user.getUsername());
+            // 步骤4: 验证密码
+            logger.info("步骤4: 验证密码");
+            logger.info("输入密码长度: {}", loginRequest.getPassword().length());
+            logger.info("存储密码: {}", team.getPassword());
             
-            // 5. 更新最后登录时间
-            updateLastLoginTime(user);
+            boolean passwordMatch = passwordEncoder.matches(loginRequest.getPassword(), team.getPassword());
+            logger.info("✅ 密码验证结果: {}", passwordMatch);
             
-            // 6. 构建响应
+            if (!passwordMatch) {
+                logger.warn("❌ 密码验证失败: teamId={}", teamId);
+                throw new AuthenticationException("用户名或密码错误");
+            }
+            
+            // 步骤5: 生成JWT Token
+            logger.info("步骤5: 生成JWT Token");
+            String token = JwtUtil.generateToken(teamId.toString(), "TEAM", null);
+            logger.info("✅ JWT Token生成成功: {}", token.substring(0, Math.min(50, token.length())) + "...");
+            
+            // 步骤6: 构建响应
+            logger.info("步骤6: 构建响应");
             LoginResponse response = new LoginResponse(
                     token,
-                    user.getId(),
-                    user.getUsername(),
-                    user.getOrganizationCode(),
-                    user.getRole()
+                    team.getId(),
+                    team.getName(),
+                    team.getOrgCode(), // 返回参赛单位的机构代码
+                    "TEAM"
             );
+            logger.info("✅ 响应构建完成");
             
-            logger.info("用户登录成功: organizationCode={}, username={}", 
-                       loginRequest.getOrganizationCode(), loginRequest.getUsername());
+            logger.info("🎉 参赛单位登录成功: teamId={}, teamName={}", teamId, team.getName());
             
             return response;
             
+        } catch (NumberFormatException e) {
+            logger.error("❌ 参赛单位ID格式错误: username={}", loginRequest.getUsername());
+            throw new AuthenticationException("参赛单位ID格式错误");
         } catch (AuthenticationException e) {
-            logger.error("用户登录失败: organizationCode={}, username={}, error={}", 
-                        loginRequest.getOrganizationCode(), loginRequest.getUsername(), e.getMessage());
+            logger.error("❌ 认证异常: {}", e.getMessage());
             throw e;
         } catch (Exception e) {
-            logger.error("登录过程中发生异常: organizationCode={}, username={}, error={}", 
-                        loginRequest.getOrganizationCode(), loginRequest.getUsername(), e.getMessage(), e);
+            logger.error("❌ 参赛单位登录过程中发生未预期异常: teamId={}, error={}", 
+                        loginRequest.getUsername(), e.getMessage(), e);
             throw new AuthenticationException("登录失败，请稍后重试");
         }
     }
@@ -97,6 +268,18 @@ public class AuthService {
         if (user.getStatus() == null || user.getStatus() != 1) {
             logger.warn("用户账号已被禁用: userId={}, username={}", user.getId(), user.getUsername());
             throw new AuthenticationException("账号已被禁用，请联系管理员");
+        }
+    }
+    
+    /**
+     * 验证参赛单位状态
+     * @param team 参赛单位实体
+     * @throws AuthenticationException 参赛单位状态异常
+     */
+    private void validateTeamStatus(Team team) {
+        if (!"ACTIVE".equals(team.getStatus())) {
+            logger.warn("参赛单位已被禁用: teamId={}, teamName={}", team.getId(), team.getName());
+            throw new AuthenticationException("参赛单位已被禁用，请联系管理员");
         }
     }
     
